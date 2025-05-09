@@ -1,62 +1,46 @@
 import os
-from collections import defaultdict
 
 import numpy as np
-from PIL import Image
 from scipy.spatial.distance import euclidean
-from sklearn.datasets import fetch_lfw_people
+from sklearn.datasets import fetch_lfw_pairs
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 from degradations import degradation_pool
 from plotter import tsne_training_recognizable_unrecognizable_original_images_having_different_colors, tsne_test_images_originated_from_same_original_image_having_same_colors
-from utility import get_encoding_from_image, save_image
+from utility import get_encoding_from_image, save_image, ensure_rgb
 
 os.makedirs("output/recognizable", exist_ok=True)
 os.makedirs("output/unrecognizable", exist_ok=True)
 os.makedirs("output/no_embedding", exist_ok=True)
 
-min_images_per_person_lfw = 10
-used_training_identity_count = 10
-used_training_images_per_identity = 5
-used_test_identity_count = 10
-used_test_images_per_identity = 5
-
-test_to_training_ratio = 0.2
-
-verification_threshold = 0.4
+verification_threshold = 0.3
 ers_threshold = 1
 
-min_degradation_strength = 1
-max_degradation_strength = 10
+training_identity_count = 10
+test_identity_count = 10
 
-save_degraded_images = True
+min_degradation_strength = 1
+max_degradation_strength = 6
+
+save_degraded_images = False
 
 print("Loading LFW dataset...")
-lfw = fetch_lfw_people(min_faces_per_person=min_images_per_person_lfw, resize=1.0)
-images = lfw.images
-targets = lfw.target
-target_names = lfw.target_names
 
-unique_labels = np.unique(targets)
-train_labels, test_labels = train_test_split(unique_labels, test_size=test_to_training_ratio, random_state=42)
+lfw_pairs_train = fetch_lfw_pairs(subset='train', color=True, resize=1.0)
+train_pairs = lfw_pairs_train.pairs
+train_labels = lfw_pairs_train.target
 
-train_indices = [i for i in range(len(targets)) if targets[i] in train_labels]
-train_images = [Image.fromarray((images[i] * 255).astype(np.uint8)) for i in train_indices]
-train_labels_mapped = [targets[i] for i in train_indices]
+lfw_pairs_test = fetch_lfw_pairs(subset='test', color=True, resize=1.0)
+test_pairs = lfw_pairs_test.pairs
+test_labels = lfw_pairs_test.target
 
-test_indices = [i for i in range(len(targets)) if targets[i] in test_labels]
-test_images = [Image.fromarray((images[i] * 255).astype(np.uint8)) for i in test_indices]
-test_labels_mapped = [targets[i] for i in test_indices]
+train_pairs = [(ensure_rgb(img1), ensure_rgb(img2)) for (img1, img2) in train_pairs]
+test_pairs = [(ensure_rgb(img1), ensure_rgb(img2)) for (img1, img2) in test_pairs]
 
-identity_to_images_train = defaultdict(list)
-for img, label in zip(train_images, train_labels_mapped):
-    identity_to_images_train[label].append(img)
+#training_identity_count = len(train_pairs)
+#test_identity_count = len(test_pairs)
 
-identity_to_images_test = defaultdict(list)
-for img, label in zip(test_images, test_labels_mapped):
-    identity_to_images_test[label].append(img)
 print("\nLFW dataset loaded.")
 
 training_no_face_images_statistics = {fn.__name__: 0 for fn in degradation_pool}
@@ -81,51 +65,51 @@ all_training_embeddings = []
 training_group_index = 0
 training_labels = []
 
-for label in tqdm(list(identity_to_images_train.keys())[:used_training_identity_count]):
-    img_list = identity_to_images_train[label]
-    for original_img in img_list[:used_training_images_per_identity]:
-        original_training_images.append(original_img)
-        original_enc = get_encoding_from_image(original_img)
-        if original_enc is None:
-            continue
+for i in tqdm(range(training_identity_count)):
+    image1, image2 = train_pairs[i]
+    original_training_images.append(image1)
+    original_embedding = get_encoding_from_image(image1)
+    verification_embedding = get_encoding_from_image(image2)
+    if original_embedding is None:
+        continue
 
-        training_group_id = f"group_{training_group_index}"
-        training_group_index += 1
+    training_group_id = f"group_{training_group_index}"
+    training_group_index += 1
 
-        all_training_embeddings.append(original_enc)
-        training_labels.append(training_group_id)
+    all_training_embeddings.append(original_embedding)
+    training_labels.append(training_group_id)
 
-        for degradation_fn in degradation_pool:
-            for strength in range(min_degradation_strength, max_degradation_strength):
-                degraded_img = degradation_fn(original_img.copy(), strength=strength)
-                degraded_enc = get_encoding_from_image(degraded_img)
+    for degradation_fn in degradation_pool:
+        for strength in range(min_degradation_strength, max_degradation_strength):
+            degraded_img = degradation_fn(image1.copy(), strength=strength)
+            degraded_enc = get_encoding_from_image(degraded_img)
 
-                all_training_embeddings.append(degraded_enc)
-                training_labels.append(training_group_id)
+            all_training_embeddings.append(degraded_enc)
+            training_labels.append(training_group_id)
 
-                if degraded_enc is None:
-                    training_no_face_images_statistics[degradation_fn.__name__] += 1
-                    training_no_face_count += 1
-                    if save_degraded_images:
-                        degraded_img.save(f"output/no_embedding/img_{label}_{degradation_fn.__name__}_s{strength}.png")
-                    continue
+            if degraded_enc is None:
+                training_no_face_images_statistics[degradation_fn.__name__] += 1
+                training_no_face_count += 1
+                if save_degraded_images:
+                    degraded_img.save(f"output/no_embedding/img_{i}_{degradation_fn.__name__}_s{strength}.png")
+                continue
 
-                similarity = cosine_similarity([original_enc], [degraded_enc])[0][0]
+            similarity = cosine_similarity([verification_embedding], [degraded_enc])[0][0]
 
-                if similarity > verification_threshold:
-                    recognizable_training_images.append((degraded_img, degraded_enc, original_img, original_enc))
-                    training_recognizable_images_statistics[degradation_fn.__name__] += 1
-                    training_recognizable_count += 1
-                    if save_degraded_images:
-                        save_image(degraded_img, "output/recognizable", f"img_{label}_{degradation_fn.__name__}_s{strength}_sim{similarity:.2f}.png")
-                else:
-                    unrecognizable_training_images.append((degraded_img, degraded_enc, original_img, original_enc))
-                    training_unrecognizable_images_statistics[degradation_fn.__name__] += 1
-                    training_unrecognizable_count += 1
-                    if save_degraded_images:
-                        save_image(degraded_img, "output/unrecognizable", f"img_{label}_{degradation_fn.__name__}_s{strength}_sim{similarity:.2f}.png")
+            if similarity > verification_threshold:
+                recognizable_training_images.append((degraded_img, degraded_enc, image1, original_embedding))
+                training_recognizable_images_statistics[degradation_fn.__name__] += 1
+                training_recognizable_count += 1
+                if save_degraded_images:
+                    save_image(degraded_img, "output/recognizable", f"img_{i}_{degradation_fn.__name__}_s{strength}_sim{similarity:.2f}.png")
+            else:
+                unrecognizable_training_images.append((degraded_img, degraded_enc, image1, original_embedding))
+                training_unrecognizable_images_statistics[degradation_fn.__name__] += 1
+                training_unrecognizable_count += 1
+                if save_degraded_images:
+                    save_image(degraded_img, "output/unrecognizable", f"img_{i}_{degradation_fn.__name__}_s{strength}_sim{similarity:.2f}.png")
 
-                training_total_count += 1
+            training_total_count += 1
 
 print("\nTraining set statistics:")
 print("Total images processed:", training_total_count)
@@ -182,47 +166,50 @@ unrecognizable_test_images = []
 ers_removed_test_images = []
 ers_filtered_test_images = []
 
+ers_scores = []
+
 if ui_centroid is not None:
-    for label in tqdm(list(identity_to_images_test.keys())[:used_test_identity_count]):
-        img_list = identity_to_images_test[label]
+    for i in tqdm(range(test_identity_count)):
+        image1, image2 = test_pairs[i]
 
-        for original_img in img_list[:used_test_images_per_identity]:
-            original_enc = get_encoding_from_image(original_img)
-            original_test_images.append(original_img)
-            if original_enc is None:
-                continue
+        original_embedding = get_encoding_from_image(image1)
+        verification_embedding = get_encoding_from_image(image2)
+        original_test_images.append(image1)
+        if original_embedding is None:
+            continue
 
-            for degradation_fn in degradation_pool:
-                for strength in range(min_degradation_strength, max_degradation_strength):
-                    degraded_img = degradation_fn(original_img.copy(), strength=strength)
-                    degraded_enc = get_encoding_from_image(degraded_img)
-                    degraded_test_images.append(degraded_img)
-                    if degraded_enc is None:
-                        test_no_face_images_statistics[degradation_fn.__name__] += 1
-                        test_no_face_count += 1
+        for degradation_fn in degradation_pool:
+            for strength in range(min_degradation_strength, max_degradation_strength):
+                degraded_img = degradation_fn(image1.copy(), strength=strength)
+                degraded_enc = get_encoding_from_image(degraded_img)
+                degraded_test_images.append(degraded_img)
+                if degraded_enc is None:
+                    test_no_face_images_statistics[degradation_fn.__name__] += 1
+                    test_no_face_count += 1
+                    if save_degraded_images:
+                        degraded_img.save(f"output/no_embedding/img_{i}_{degradation_fn.__name__}_s{strength}.png")
+                    continue
+
+                distance = euclidean(ui_centroid.flatten(), degraded_enc.flatten())
+                ers_scores.append(distance)
+
+                if distance > ers_threshold:
+                    ers_filtered_test_images.append(degraded_img)
+                    similarity = cosine_similarity([verification_embedding], [degraded_enc])[0][0]
+                    if similarity > verification_threshold:
                         if save_degraded_images:
-                            degraded_img.save(f"output/no_embedding/img_{label}_{degradation_fn.__name__}_s{strength}.png")
-                        continue
-
-                    distance = euclidean(ui_centroid.flatten(), degraded_enc.flatten())
-
-                    if distance > ers_threshold:
-                        ers_filtered_test_images.append(degraded_img)
-                        similarity = cosine_similarity([original_enc], [degraded_enc])[0][0]
-                        if similarity > verification_threshold:
-                            if save_degraded_images:
-                                save_image(degraded_img, "output/recognizable", f"img_{label}_{degradation_fn.__name__}_s{strength}_sim{similarity:.2f}.png")
-                            ers_filter_success_count += 1
-                            recognizable_test_images.append(degraded_img)
-                        else:
-                            test_unrecognizable_images_statistics[degradation_fn.__name__] += 1
-                            ers_filter_fail_count += 1
-                            unrecognizable_test_images.append(degraded_img)
-                        ers_filter_total_count += 1
+                            save_image(degraded_img, "output/recognizable", f"img_{i}_{degradation_fn.__name__}_s{strength}_sim{similarity:.2f}.png")
+                        ers_filter_success_count += 1
+                        recognizable_test_images.append(degraded_img)
                     else:
-                        ers_filtered_out_count += 1
-                        ers_removed_test_images.append(degraded_img)
-                    test_total_count += 1
+                        test_unrecognizable_images_statistics[degradation_fn.__name__] += 1
+                        ers_filter_fail_count += 1
+                        unrecognizable_test_images.append(degraded_img)
+                    ers_filter_total_count += 1
+                else:
+                    ers_filtered_out_count += 1
+                    ers_removed_test_images.append(degraded_img)
+                test_total_count += 1
 
 print("\nTest set statistics:")
 print("Total images processed:", test_total_count)
@@ -231,34 +218,35 @@ print("Successful verifications with ERS filtered images:", ers_filter_success_c
 print("Unsuccessful verifications with ERS filtered images:", ers_filter_fail_count)
 print("Successful verification ratio with ERS filtered images:", ers_filter_success_count / ers_filter_total_count)
 print("Total images that were filtered out by ERS:", ers_filtered_out_count)
-
+print("Min ERS score:", min(ers_scores))
+print("Max ERS score:", max(ers_scores))
+print("Average ERS score:", sum(ers_scores) / len(ers_scores))
 # Test image t-SNE for images originated from same original images
 all_test_embeddings = []
 labels = []
 group_index = 0
-for label in tqdm(list(identity_to_images_test.keys())[:5]):
-    img_list = identity_to_images_test[label]
+for i in tqdm(range(test_identity_count)):
+    image1, image2 = test_pairs[i]
 
-    for original_img in img_list[:5]:
-        original_enc = get_encoding_from_image(original_img)
-        if original_enc is None:
-            continue
+    original_embedding = get_encoding_from_image(image1)
+    if original_embedding is None:
+        continue
 
-        group_id = f"group_{group_index}"
-        group_index += 1
+    group_id = f"group_{group_index}"
+    group_index += 1
 
-        all_test_embeddings.append(original_enc)
-        labels.append(group_id)
+    all_test_embeddings.append(original_embedding)
+    labels.append(group_id)
 
-        for degradation_fn in degradation_pool:
-            for strength in range(min_degradation_strength, max_degradation_strength):
-                degraded_img = degradation_fn(original_img.copy(), strength=strength)
-                degraded_enc = get_encoding_from_image(degraded_img)
-                if degraded_enc is None:
-                    continue
+    for degradation_fn in degradation_pool:
+        for strength in range(min_degradation_strength, max_degradation_strength):
+            degraded_img = degradation_fn(image1.copy(), strength=strength)
+            degraded_enc = get_encoding_from_image(degraded_img)
+            if degraded_enc is None:
+                continue
 
-                all_test_embeddings.append(degraded_enc)
-                labels.append(group_id)
+            all_test_embeddings.append(degraded_enc)
+            labels.append(group_id)
 
 # First plot for unrecognizable, recognizable and original images having different colors
 tsne_training_recognizable_unrecognizable_original_images_having_different_colors(original_training_images, recognizable_training_images, unrecognizable_training_images, ui_centroid,
