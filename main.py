@@ -166,6 +166,10 @@ unrecognizable_test_images = []
 ers_removed_test_images = []
 ers_filtered_test_images = []
 
+all_test_embeddings_for_tsne = []
+labels_for_tsne = []
+group_index_for_tsne = 0
+
 ers_scores = []
 
 if ui_centroid is not None:
@@ -175,6 +179,12 @@ if ui_centroid is not None:
         original_embedding = get_encoding_from_image(image1)
         verification_embedding = get_encoding_from_image(image2)
         original_test_images.append(image1)
+
+        group_id = f"group_{group_index_for_tsne}"
+        group_index_for_tsne += 1
+        all_test_embeddings_for_tsne.append(original_embedding)
+        labels_for_tsne.append(group_id)
+
         if original_embedding is None:
             continue
 
@@ -183,6 +193,10 @@ if ui_centroid is not None:
                 degraded_img = degradation_fn(image1.copy(), strength=strength)
                 degraded_enc = get_encoding_from_image(degraded_img)
                 degraded_test_images.append(degraded_img)
+
+                all_test_embeddings_for_tsne.append(degraded_enc)
+                labels_for_tsne.append(group_id)
+
                 if degraded_enc is None:
                     test_no_face_images_statistics[degradation_fn.__name__] += 1
                     test_no_face_count += 1
@@ -221,36 +235,10 @@ print("Total images that were filtered out by ERS:", ers_filtered_out_count)
 print("Min ERS score:", min(ers_scores))
 print("Max ERS score:", max(ers_scores))
 print("Average ERS score:", sum(ers_scores) / len(ers_scores))
-# Test image t-SNE for images originated from same original images
-all_test_embeddings = []
-labels = []
-group_index = 0
-for i in tqdm(range(test_identity_count)):
-    image1, image2 = test_pairs[i]
-
-    original_embedding = get_encoding_from_image(image1)
-    if original_embedding is None:
-        continue
-
-    group_id = f"group_{group_index}"
-    group_index += 1
-
-    all_test_embeddings.append(original_embedding)
-    labels.append(group_id)
-
-    for degradation_fn in degradation_pool:
-        for strength in range(min_degradation_strength, max_degradation_strength):
-            degraded_img = degradation_fn(image1.copy(), strength=strength)
-            degraded_enc = get_encoding_from_image(degraded_img)
-            if degraded_enc is None:
-                continue
-
-            all_test_embeddings.append(degraded_enc)
-            labels.append(group_id)
 
 # First plot for unrecognizable, recognizable and original images having different colors
 tsne_training_recognizable_unrecognizable_original_images_having_different_colors(original_training_images, recognizable_training_images, unrecognizable_training_images, ui_centroid,
                                                                                   "t-SNE - Training Set - Recognizable - Unrecognizable - Original Images")
 # Second plot for all images that are originated from the same original image having the same color
 tsne_test_images_originated_from_same_original_image_having_same_colors(all_training_embeddings, training_labels, ui_centroid, "t-SNE - Training Set - Images Originated from Same Original Image")
-tsne_test_images_originated_from_same_original_image_having_same_colors(all_test_embeddings, labels, ui_centroid, "t-SNE - Test Set - Images Originated from Same Original Image")
+tsne_test_images_originated_from_same_original_image_having_same_colors(all_test_embeddings_for_tsne, labels_for_tsne, ui_centroid, "t-SNE - Test Set - Images Originated from Same Original Image")
