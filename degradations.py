@@ -99,7 +99,6 @@ def preprocess_image_for_pil(img):
         img = img.astype(np.uint8)
     return img
 
-
 degradation_pool = [
     gaussian_blur,
     motion_blur,
@@ -108,3 +107,8 @@ degradation_pool = [
     affine_transform,
     occlude_image,
 ]
+"""
+degradation_pool = [
+    low_resolution
+]
+"""
