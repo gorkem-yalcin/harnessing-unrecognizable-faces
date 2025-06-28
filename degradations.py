@@ -8,7 +8,7 @@ from PIL import Image, ImageFilter, ImageDraw
 def gaussian_blur(img, strength=1):
     img = preprocess_image_for_pil(img)
     pil_img = Image.fromarray(img)  # Ensure it's a PIL Image
-    radius = 1 + strength * 0.5  # more intense blur with higher strength
+    radius = 1.5 + strength * 0.43  # more intense blur with higher strength
     blurred_img = pil_img.filter(ImageFilter.GaussianBlur(radius=radius))
     return np.array(blurred_img)
 
@@ -16,7 +16,7 @@ def gaussian_blur(img, strength=1):
 def motion_blur(img, strength=1):
     img = preprocess_image_for_pil(img)
     img = Image.fromarray(img)
-    kernel_size = int(5 + strength * 2)
+    kernel_size = int(8 + strength * 2.6)
     angle = random.choice([0, 45, 90])
     kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
 
@@ -37,7 +37,7 @@ def low_resolution(img, strength=1):
     img = preprocess_image_for_pil(img)
     img = Image.fromarray(img)
     w, h = img.size
-    factor = int(1 + strength * 1.25)  # more downsampling
+    factor = int(1 + strength * 1.4)  # more downsampling
     downsample = img.resize((max(1, w // factor), max(1, h // factor)), Image.BILINEAR)
     return downsample.resize((w, h), Image.BILINEAR)
 
@@ -45,7 +45,7 @@ def low_resolution(img, strength=1):
 def rotate_image(img, strength=1):
     img = preprocess_image_for_pil(img)
     img = Image.fromarray(img)
-    angle = strength * 10 * random.choice([-1, 1])  # rotate up to ±75°
+    angle = strength * 14 * random.choice([-1, 1])  # rotate up to ±75°
     return img.rotate(angle, resample=Image.BILINEAR, fillcolor=0)
 
 
@@ -53,7 +53,8 @@ def affine_transform(img, strength=1):
     img = preprocess_image_for_pil(img)
     img = Image.fromarray(img)
     width, height = img.size
-    scale = 0.2 * strength  # stronger distortion
+    scale = 0.25 * strength  # stronger distortion
+    #scale = 0.22 * strength  # stronger distortion
     return img.transform(
         (width, height),
         Image.AFFINE,
@@ -70,7 +71,8 @@ def occlude_image(img, strength=1):
     img = img.copy()
     draw = ImageDraw.Draw(img)
     w, h = img.size
-    box_size = int(min(w, h) * (0.10 + 0.15 * strength))  # larger occlusion
+    #box_size = int(min(w, h) * (0.09 + 0.12 * strength))  # larger occlusion
+    box_size = int(min(w, h) * (0.1 + 0.12 * strength))  # larger occlusion
     x1 = random.randint(0, w - box_size)
     y1 = random.randint(0, h - box_size)
     draw.rectangle([x1, y1, x1 + box_size, y1 + box_size], fill=0)  # black box
@@ -109,6 +111,6 @@ degradation_pool = [
 ]
 """
 degradation_pool = [
-    low_resolution
-]
-"""
+    occlude_image,
+    affine_transform
+]"""

@@ -213,8 +213,15 @@ def tsne_training_recognizable_unrecognizable_original_images_having_different_c
         labels.append('ui_centroid')
     # Convert to NumPy array
     all_embeddings = np.array(all_embeddings)
+
+    if len(all_embeddings) < 2:
+        print("[t-SNE] Not enough data points to visualize.")
+        return
+
+    safe_perplexity = min(30, max(2, len(all_embeddings) - 1))
+
     # Apply t-SNE
-    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    tsne = TSNE(n_components=2, random_state=42, perplexity=safe_perplexity)
     embeddings_2d = tsne.fit_transform(all_embeddings)
     # Plot
     plt.figure(figsize=(10, 7))
@@ -380,7 +387,7 @@ def plot_ers_similarity_binned(combined_data, title="ERS vs Similarity (Binned A
     plt.show()
 
 
-def plot_roc_curve(data, similarity_title="ROC Curve - Similarity", ers_title="ROC Curve - ERS"):
+def  plot_roc_curve(data, similarity_title="ROC Curve - Similarity", ers_title="ROC Curve - ERS"):
     # Assume your data is like this:
     # combined_data = [(ers, sim, 'S' or 'F')]
     labels = [1 if label == 'S' else 0 for _, _, label in data]

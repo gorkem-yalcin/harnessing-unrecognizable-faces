@@ -3,11 +3,9 @@ import os
 import cv2
 import hdbscan
 import numpy as np
+import torch
 from PIL import Image
 from deepface import DeepFace
-from matplotlib import cm
-from mtcnn import MTCNN
-from sklearn.cluster import DBSCAN
 
 
 def save_image(img, path, filename):
@@ -31,7 +29,7 @@ def get_ui_clusters_hdbscan(unrecognizable_training_images, min_cluster_size):
     return ui_centroids
 
 
-def get_encoding_from_image(img, method):
+def get_encoding_from_image(img, method, embedding_cache, image_key, detector, embedder, device):
     if method == "deepface":
         rgb_img = np.array(img)
         try:
@@ -42,7 +40,9 @@ def get_encoding_from_image(img, method):
             print(f"Error extracting face encoding: {e}")
             return None
     elif method == "MTCNN":
-        detector = MTCNN()
+        if image_key in embedding_cache:
+            return np.array(embedding_cache[image_key])
+        #detector = MTCNN()
         rgb_img = np.array(img)
         if rgb_img.dtype != np.uint8:
             rgb_img = (rgb_img * 255).clip(0, 255).astype(np.uint8)
@@ -66,12 +66,39 @@ def get_encoding_from_image(img, method):
             embedding_array = np.array(embedding)
             if embedding_array.size == 1 and np.isnan(embedding_array[0]) and np.isnan(embedding_array).any():
                 return None
+            embedding_cache[image_key] = embedding_array
             return embedding_array
 
         except Exception as e:
             print(f"[MTCNN] Error extracting face encoding: {e}")
             return None
+    elif method == "facenet_pytorch":
+        if image_key in embedding_cache:
+            return embedding_cache[image_key]
 
+        try:
+            if not isinstance(img, Image.Image):
+                if img.dtype != np.uint8:
+                    img = (img * 255).clip(0, 255).astype(np.uint8)
+                img = Image.fromarray(img)
+            # Detect face (returns cropped face tensor if detected)
+            face_tensor = detector(img)
+
+            if face_tensor is None:
+                return None  # No face detected
+
+            face_tensor = face_tensor.unsqueeze(0).to(device)  # Add batch dimension
+
+            # Get embedding
+            with torch.no_grad():
+                embedding = embedder(face_tensor).cpu().numpy().flatten()
+
+            embedding_cache[image_key] = embedding
+            return embedding
+
+        except Exception as e:
+            print(f"[PyTorch] Error extracting embedding: {e}")
+            return None
 
 def convert_pair_to_grayscale_uint8(pair):
     def to_gray_uint8(img):
