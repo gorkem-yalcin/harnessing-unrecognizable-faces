@@ -387,55 +387,117 @@ def plot_ers_similarity_binned(combined_data, title="ERS vs Similarity (Binned A
     plt.show()
 
 
-def  plot_roc_curve(data, similarity_title="ROC Curve - Similarity", ers_title="ROC Curve - ERS"):
-    # Assume your data is like this:
-    # combined_data = [(ers, sim, 'S' or 'F')]
-    labels = [1 if label == 'S' else 0 for _, _, label in data]
-    similarity_scores = [sim for _, sim, _ in data]
-    ers_scores = [ers for ers, _, _ in data]
+def plot_roc_curve(data, use_ers=False, similarity_title="ROC Curve - Cosine Similarity", pr_title="Precision-Recall Curve"):
+    """
+    Compute and plot ROC and Precision-Recall curves to find optimal verification threshold.
+
+    Args:
+        data: List of tuples [(ers, sim, label), ...], where label is 'S' (match) or 'F' (mismatch).
+        use_ers: If True, compute and plot ERS-based ROC curve.
+        similarity_title: Title for similarity ROC plot.
+        pr_title: Title for precision-recall plot.
+
+    Returns:
+        dict: Best thresholds and AUCs.
+    """
+    # Extract labels and scores
+    labels = np.array([1 if label == 'S' else 0 for _, _, label in data])
+    similarity_scores = np.array([sim for _, sim, _ in data])
+
+    # ROC Curve for Cosine Similarity
     fpr, tpr, thresholds = roc_curve(labels, similarity_scores)
     roc_auc = auc(fpr, tpr)
 
-    # Find the best threshold (Youden’s J statistic)
+    # Youden’s J for similarity
     j_scores = tpr - fpr
     best_idx = j_scores.argmax()
-    best_sim_thresh = thresholds[best_idx]
+    best_sim_threshold = thresholds[best_idx]
 
-    print(f"Best Similarity Threshold: {best_sim_thresh:.4f}")
-    inverted_ers_scores = [-x for x in ers_scores]
-    fpr_ers, tpr_ers, thresholds_ers = roc_curve(labels, inverted_ers_scores)
-    roc_auc_ers = auc(fpr_ers, tpr_ers)
+    # Precision-Recall Curve for Similarity
+    precision, recall, pr_thresholds = precision_recall_curve(labels, similarity_scores)
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-6)
+    best_pr_idx = f1_scores.argmax()
+    best_pr_threshold = pr_thresholds[best_pr_idx]
 
-    # Best ERS threshold
-    j_scores_ers = tpr_ers - fpr_ers
-    best_idx_ers = j_scores_ers.argmax()
-    best_ers_thresh = -thresholds_ers[best_idx_ers]  # invert back
+    # ERS processing (if enabled)
+    best_ers_threshold = None
+    roc_auc_ers = None
+    if use_ers:
+        ers_scores = np.array([ers for ers, _, _ in data])
+        inverted_ers_scores = -ers_scores  # Invert if ERS is a distance metric
+        fpr_ers, tpr_ers, thresholds_ers = roc_curve(labels, inverted_ers_scores)
+        roc_auc_ers = auc(fpr_ers, tpr_ers)
+        j_scores_ers = tpr_ers - fpr_ers
+        best_idx_ers = j_scores_ers.argmax()
+        best_ers_threshold = -thresholds_ers[best_idx_ers]  # Invert back
 
-    print(f"Best ERS Threshold: {best_ers_thresh:.4f}")
-
+    # Plotting
     plt.figure(figsize=(12, 5))
 
+    # ROC Curve
     plt.subplot(1, 2, 1)
     plt.plot(fpr, tpr, label=f'Similarity ROC (AUC = {roc_auc:.2f})')
+    plt.scatter(fpr[best_idx], tpr[best_idx], c='red', label=f'Youden Threshold ({best_sim_threshold:.4f})')
     plt.plot([0, 1], [0, 1], linestyle='--', color='gray')
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
     plt.title(similarity_title)
     plt.legend()
 
+    # Precision-Recall Curve
     plt.subplot(1, 2, 2)
-    plt.plot(fpr_ers, tpr_ers, label=f'ERS ROC (AUC = {roc_auc_ers:.2f})', color='orange')
-    plt.plot([0, 1], [0, 1], linestyle='--', color='gray')
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title(ers_title)
+    plt.plot(recall, precision, label='Precision-Recall Curve')
+    plt.scatter(recall[best_pr_idx], precision[best_pr_idx], c='red', label=f'F1 Threshold ({best_pr_threshold:.4f})')
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title(pr_title)
     plt.legend()
+
+    if use_ers:
+        plt.figure(figsize=(6, 5))
+        plt.plot(fpr_ers, tpr_ers, label=f'ERS ROC (AUC = {roc_auc_ers:.2f})', color='orange')
+        plt.scatter(fpr_ers[best_idx_ers], tpr_ers[best_idx_ers], c='red', label=f'Youden Threshold ({best_ers_threshold:.4f})')
+        plt.plot([0, 1], [0, 1], linestyle='--', color='gray')
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.title("ROC Curve - ERS")
+        plt.legend()
 
     plt.tight_layout()
     plt.show()
-    precision, recall, pr_thresholds = precision_recall_curve(labels, similarity_scores)
-    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-6)
-    best_pr_idx = f1_scores.argmax()
-    best_pr_thresh = pr_thresholds[best_pr_idx]
 
-    print(f"Best PR Similarity Threshold (F1): {best_pr_thresh:.4f}")
+    # Return results
+    results = {
+        'sim_youden_threshold': best_sim_threshold,
+        'sim_f1_threshold': best_pr_threshold,
+        'sim_roc_auc': roc_auc
+    }
+    if use_ers:
+        results.update({
+            'ers_youden_threshold': best_ers_threshold,
+            'ers_roc_auc': roc_auc_ers
+        })
+
+    print(f"Best Similarity Threshold (Youden’s J): {best_sim_threshold:.4f}")
+    print(f"Best Similarity Threshold (F1): {best_pr_threshold:.4f}")
+    if use_ers:
+        print(f"Best ERS Threshold (Youden’s J): {best_ers_threshold:.4f}")
+
+    match_sim = [sim for _, sim, label in data if label == 'S']
+    mismatch_sim = [sim for _, sim, label in data if label == 'F']
+
+    plt.hist(match_sim, bins=50, alpha=0.5, label='Match Pairs', color='blue')
+    plt.hist(mismatch_sim, bins=50, alpha=0.5, label='Mismatch Pairs', color='red')
+    plt.axvline(0.2115, color='green', linestyle='--', label='Youden Threshold (0.2115)')
+    plt.axvline(0.1018, color='purple', linestyle='--', label='F1 Threshold (0.1018)')
+    plt.xlabel('Cosine Similarity')
+    plt.ylabel('Count')
+    plt.title('Cosine Similarity Distribution')
+    plt.legend()
+    plt.show()
+
+    return results
+
+# Example usage
+# data = [(ers1, sim1, 'S'), (ers2, sim2, 'F'), ...]
+# results = plot_roc_curve(data, use_ers=True)

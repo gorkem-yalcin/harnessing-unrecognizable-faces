@@ -1,29 +1,44 @@
+import csv
+import os
 import pickle
+from collections import Counter
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import precision_score, recall_score, f1_score, classification_report
+from sklearn.model_selection import train_test_split
 from torch import optim
 from torch.utils.data import TensorDataset, DataLoader
-import matplotlib.pyplot as plt
-from collections import Counter
-import os
-import csv
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=1, smoothing=0.1):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.smoothing = smoothing
+
+    def forward(self, inputs, targets):
+        targets_smooth = targets * (1 - self.smoothing) + 0.5 * self.smoothing
+        BCE_loss = nn.BCEWithLogitsLoss(reduction='none')(inputs, targets_smooth)
+        pt = torch.exp(-BCE_loss)
+        F_loss = self.alpha * (1 - pt) ** self.gamma * BCE_loss
+        return F_loss.mean()
 
 
 class Classifier(nn.Module):
     def __init__(self, dropout, input_dim=512):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.ReLU(),
-            nn.BatchNorm1d(512),
-            nn.Dropout(dropout),
             nn.Linear(512, 256),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.BatchNorm1d(256),
             nn.Dropout(dropout),
             nn.Linear(256, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.BatchNorm1d(64),
             nn.Dropout(dropout),
             nn.Linear(64, 1)
@@ -46,11 +61,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 best_accuracies = []
-# Split
-X_train_split, X_val, y_train_split, y_val = train_test_split(
-    X_train, y_train, test_size=0.2, shuffle=True
-)
+X_train = X_train / np.linalg.norm(X_train, axis=1, keepdims=True)
 
+# Split before filtering for validation
+X_train_split, X_val, y_train_split, y_val = train_test_split(X_train, y_train, test_size=0.2, stratify=y_train, shuffle=True)
+X_val = X_val / np.linalg.norm(X_val, axis=1, keepdims=True)
 train_label_counts = Counter(y_train_split)
 val_label_counts = Counter(y_val)
 print(f"Label distribution in the training set: {train_label_counts}")
@@ -64,10 +79,10 @@ val_y_tensor = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1).to(device)
 
 # Dataset and config
 dataset = TensorDataset(X_tensor, y_tensor)
-learning_rates = [1e-4]
-weight_decays = [1e-6]
-dropout_values = [0.1]
-batch_sizes = [128]
+learning_rates = [5e-4]
+weight_decays = [1e-5]
+dropout_values = [0.3]
+batch_sizes = [256]
 
 for lr in learning_rates:
     for weight_decay in weight_decays:
@@ -81,7 +96,7 @@ for lr in learning_rates:
                 model = Classifier(dropout).to(device)
 
                 pos_weight = torch.tensor([(len(y_train_split) - sum(y_train_split)) / sum(y_train_split)]).to(device)
-                criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                criterion = FocalLoss(alpha=pos_weight.item(), gamma=2, smoothing=0.1)
                 optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
                 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
@@ -104,14 +119,22 @@ for lr in learning_rates:
 
                     for X_batch, y_batch in train_loader:
                         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                        noise = torch.normal(mean=0, std=0.03, size=X_batch.shape).to(device)
+                        X_batch = X_batch + noise
                         optimizer.zero_grad()
-                        output = model(X_batch)
-                        loss = criterion(output, y_batch)
+                        logits = model(X_batch)
+                        probs = torch.sigmoid(logits)
+                        """confidence = torch.abs(probs - 0.5)
+                        sample_weights = confidence / (confidence.max() + 1e-8)
+
+                        losses = criterion(logits, y_batch)
+                        loss = criterion(logits, y_batch).mean()"""
+                        loss = criterion(logits, y_batch)
+
                         loss.backward()
                         optimizer.step()
 
                         running_loss += loss.item() * X_batch.size(0)
-                        probs = torch.sigmoid(output)
                         preds = (probs > 0.5).float()
                         correct += (preds == y_batch).sum().item()
                         total += y_batch.size(0)
@@ -127,17 +150,25 @@ for lr in learning_rates:
                     val_correct = 0
                     val_total = 0
 
+                    all_val_preds = []
+                    all_val_labels = []
+
                     with torch.no_grad():
                         for val_X_batch, val_y_batch in DataLoader(TensorDataset(val_X_tensor, val_y_tensor), batch_size=batch_size):
                             val_X_batch, val_y_batch = val_X_batch.to(device), val_y_batch.to(device)
                             val_output = model(val_X_batch)
-                            val_loss = criterion(val_output, val_y_batch)
-                            val_running_loss += val_loss.item() * val_X_batch.size(0)
+                            val_losses_batch = criterion(val_output, val_y_batch)
+                            val_loss_mean = val_losses_batch.mean()
+                            val_running_loss += val_loss_mean.item() * val_X_batch.size(0)
 
                             val_probs = torch.sigmoid(val_output)
                             val_preds = (val_probs > 0.5).float()
                             val_correct += (val_preds == val_y_batch).sum().item()
                             val_total += val_y_batch.size(0)
+
+                            # 👇 Add this to collect predictions & true labels
+                            all_val_preds.append(val_preds.cpu())
+                            all_val_labels.append(val_y_batch.cpu())
 
                     val_loss = val_running_loss / val_total
                     val_acc = val_correct / val_total
@@ -145,6 +176,18 @@ for lr in learning_rates:
 
                     val_losses.append(val_loss)
                     val_accuracies.append(val_acc)
+
+                    # 👇 After the validation loop, compute metrics on the whole val set
+                    all_val_preds = torch.cat(all_val_preds).numpy().astype(int)
+                    all_val_labels = torch.cat(all_val_labels).numpy().astype(int)
+
+                    precision = precision_score(all_val_labels, all_val_preds, zero_division=0)
+                    recall = recall_score(all_val_labels, all_val_preds, zero_division=0)
+                    f1 = f1_score(all_val_labels, all_val_preds, zero_division=0)
+                    print(f"Epoch {epoch + 1}/{epochs} - "
+                          f"Loss: {epoch_loss:.4f} - Acc: {epoch_acc:.4f} - "
+                          f"Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f} - "
+                          f"F1: {f1:.4f} - Precision: {precision:.4f} - Recall: {recall:.4f}")
 
                     if val_acc > best_val_acc:
                         best_val_acc = val_acc
@@ -154,9 +197,6 @@ for lr in learning_rates:
                         best_epoch = epoch + 1
                         best_model_state = model.state_dict()
                         print(f"New best model found at epoch {best_epoch} with val acc: {val_acc:.4f}")
-
-                    print(f"Epoch {epoch + 1}/{epochs} - Loss: {epoch_loss:.4f} - Acc: {epoch_acc:.4f} - "
-                          f"Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}")
 
                 # Save best model and metrics
                 best_accuracies.append(best_val_acc)
