@@ -24,7 +24,7 @@ os.makedirs("output/recognizable", exist_ok=True)
 os.makedirs("output/unrecognizable", exist_ok=True)
 os.makedirs("output/no_embedding", exist_ok=True)
 
-verification_threshold = 0.65
+verification_threshold = 0.75
 ers_threshold = 1
 
 training_match_identity_count = 100
@@ -58,7 +58,6 @@ train_mismatch_pairs = [pair for pair, label in zip(train_pairs, train_labels) i
 
 test_match_pairs = [pair for pair, label in zip(test_pairs, test_labels) if label == 1]
 test_mismatch_pairs = [pair for pair, label in zip(test_pairs, test_labels) if label == 0]
-
 
 training_match_identity_count = len(train_match_pairs)
 training_mismatch_identity_count = len(train_mismatch_pairs)
@@ -497,7 +496,6 @@ with open("binary_classifier_data.pkl", "wb") as f:
 
 combined_data = all_test_match_ers_and_cosine_similarities + all_test_mismatch_ers_and_cosine_similarities
 
-
 all_original_match_embeddings = all_original_training_match_embeddings + all_test_match_embeddings_for_tsne
 
 recognizable_similarities = [cosine_similarity([enc], [verif_enc])[0][0] for _, enc, _, verif_enc in all_recognizable_embeddings]
@@ -513,6 +511,7 @@ plt.savefig("similarity_distribution.png")
 plt.close()
 
 from sklearn.metrics import f1_score
+
 thresholds = [0.2, 0.225, 0.25, 0.3]
 for thresh in thresholds:
     y_pred = [1 if sim > thresh else 0 for sim in recognizable_similarities + unrecognizable_similarities]
