@@ -501,3 +501,98 @@ def plot_roc_curve(data, use_ers=False, similarity_title="ROC Curve - Cosine Sim
 # Example usage
 # data = [(ers1, sim1, 'S'), (ers2, sim2, 'F'), ...]
 # results = plot_roc_curve(data, use_ers=True)
+
+def analyze_adaptive_thresholds(data_list, score_name="Score", higher_is_better=True, num_bins=5):
+    """
+    Quality Score (ERS veya Prob) ile Similarity arasındaki ilişkiyi analiz eder
+    ve her kalite seviyesi için 'Optimal Verification Threshold' önerir.
+
+    data_list: List of tuples -> (quality_score, cosine_similarity, label_0_or_1)
+    """
+    print(f"\n--- ADAPTIVE THRESHOLD ANALYSIS: {score_name} ({num_bins} Bins) ---")
+
+    # DataFrame'e çevir
+    df = pd.DataFrame(data_list, columns=['score', 'similarity', 'label'])
+
+    # Veri kontrolü
+    if len(df) < num_bins * 2:
+        print("Yetersiz veri, analiz atlanıyor.")
+        return
+
+    # Binning (Gruplama)
+    try:
+        # qcut: Her grupta eşit sayıda örnek olmasını sağlar (Balanced)
+        df['bin'] = pd.qcut(df['score'], q=num_bins, labels=False, duplicates='drop')
+    except ValueError:
+        # Veri çok benzerse qcut hata verebilir, cut kullanırız
+        df['bin'] = pd.cut(df['score'], bins=num_bins, labels=False)
+
+    results = []
+
+    print(f"{'Bin':<5} | {'Range':<20} | {'Count':<6} | {'Opt. Thresh':<12} | {'Max F1':<8} | {'FAR'}")
+    print("-" * 80)
+
+    # Bin ID'lerini sırala (Skorun yönüne göre)
+    unique_bins = sorted(df['bin'].unique())
+    if not higher_is_better:
+        unique_bins = unique_bins[::-1]  # ERS gibi düşük olan iyiyse tersten bakabiliriz (opsiyonel)
+
+    for bin_id in unique_bins:
+        subset = df[df['bin'] == bin_id]
+        if len(subset) == 0: continue
+
+        min_s, max_s = subset['score'].min(), subset['score'].max()
+        y_true = subset['label']
+        y_scores = subset['similarity']
+
+        # Eğer bin içinde sadece tek tip etiket varsa (sadece match veya sadece mismatch) F1 hesaplanamaz
+        if len(y_true.unique()) < 2:
+            continue
+
+        # Precision-Recall Curve ile en iyi threshold'u bul
+        precisions, recalls, thresholds = precision_recall_curve(y_true, y_scores)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            f1_scores = 2 * (precisions * recalls) / (precisions + recalls)
+            f1_scores = np.nan_to_num(f1_scores)  # NaN'ları temizle
+
+        if len(f1_scores) == 0: continue
+
+        best_idx = np.argmax(f1_scores)
+
+        # Threshold array'i precision'dan 1 kısadır
+        idx = min(best_idx, len(thresholds) - 1)
+        best_thresh = thresholds[idx]
+        best_f1 = f1_scores[best_idx]
+
+        # False Acceptance Rate (FAR) Hesabı
+        # Mismatch olup (0), skoru threshold'u geçenlerin oranı
+        mismatches = subset[subset['label'] == 0]
+        if len(mismatches) > 0:
+            false_accepts = len(mismatches[mismatches['similarity'] >= best_thresh])
+            far = false_accepts / len(mismatches)
+        else:
+            far = 0.0
+
+        print(f"{bin_id:<5} | {min_s:.4f} - {max_s:.4f}   | {len(subset):<6} | {best_thresh:.4f}       | {best_f1:.4f}   | {far:.4f}")
+
+        results.append({
+            'bin_center': (min_s + max_s) / 2,
+            'opt_thresh': best_thresh,
+            'f1': best_f1
+        })
+
+    # Grafiği Çiz
+    if results:
+        centers = [r['bin_center'] for r in results]
+        threshs = [r['opt_thresh'] for r in results]
+
+        plt.figure(figsize=(8, 5))
+        plt.plot(centers, threshs, marker='o', linestyle='-', linewidth=2)
+        plt.title(f"Adaptive Verification Threshold vs {score_name}")
+        plt.xlabel(f"{score_name} {'(Higher is Better)' if higher_is_better else '(Lower is Better)'}")
+        plt.ylabel("Optimal Cosine Similarity Threshold")
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"adaptive_threshold_{score_name.lower().replace(' ', '_')}.png")
+        plt.close()
+        print(f"Graph saved: adaptive_threshold_{score_name.lower().replace(' ', '_')}.png")

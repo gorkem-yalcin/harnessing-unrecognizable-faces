@@ -200,7 +200,7 @@ for lr in learning_rates:
 
                 # Save best model and metrics
                 best_accuracies.append(best_val_acc)
-                os.makedirs("results", exist_ok=True)
+                os.makedirs("../results", exist_ok=True)
                 if best_model_state is not None:
                     torch.save(best_model_state, f"results/{run_id}_best_model.pt")
 

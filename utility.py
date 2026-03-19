@@ -74,7 +74,7 @@ def get_encoding_from_image(img, method, embedding_cache, image_key, detector, e
             return None
     elif method == "facenet_pytorch":
         if image_key in embedding_cache:
-            return embedding_cache[image_key]
+            return embedding_cache[image_key], None
 
         try:
             if not isinstance(img, Image.Image):
@@ -82,23 +82,36 @@ def get_encoding_from_image(img, method, embedding_cache, image_key, detector, e
                     img = (img * 255).clip(0, 255).astype(np.uint8)
                 img = Image.fromarray(img)
             # Detect face (returns cropped face tensor if detected)
-            face_tensor = detector(img)
+            boxes, probs = detector.detect(img)
+
+            if boxes is None or probs is None:
+                return None, None  # No face detected
+
+            max_prob_index = np.argmax(probs)
+            face_prob = probs[max_prob_index]
+
+            face_tensor, prob_list = detector(img, return_prob=True)
 
             if face_tensor is None:
-                return None  # No face detected
+                return None, None
 
-            face_tensor = face_tensor.unsqueeze(0).to(device)  # Add batch dimension
+            if isinstance(prob_list, list) or isinstance(prob_list, np.ndarray):
+                face_prob = prob_list[0]
+            else:
+                face_prob = prob_list
 
-            # Get embedding
+            face_tensor = face_tensor.unsqueeze(0).to(device)
+
             with torch.no_grad():
                 embedding = embedder(face_tensor).cpu().numpy().flatten()
 
             embedding_cache[image_key] = embedding
-            return embedding
+
+            return embedding, face_prob
 
         except Exception as e:
             print(f"[PyTorch] Error extracting embedding: {e}")
-            return None
+            return None, None
 
 def convert_pair_to_grayscale_uint8(pair):
     def to_gray_uint8(img):

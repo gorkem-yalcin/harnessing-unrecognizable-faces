@@ -67,15 +67,35 @@ def affine_transform(img, strength=1):
 def occlude_image(img, strength=1):
     img = preprocess_image_for_pil(img)
     img = Image.fromarray(img)
-    img = img.copy()
     draw = ImageDraw.Draw(img)
     w, h = img.size
-    box_size = int(min(w, h) * (0.3 + 0.14 * strength))  # larger occlusion
-    x1 = random.randint(0, w - box_size)
-    y1 = random.randint(0, h - box_size)
+
+    # --- DÜZELTME BAŞLANGICI ---
+    # Hesaplanan oran 1.0'ı geçerse (resimden büyük olursa) hata veriyordu.
+    # Biz oranı maksimum %80 (0.8) ile sınırlıyoruz (clamp).
+    ratio = 0.3 + 0.14 * strength
+    ratio = min(ratio, 0.8)
+
+    box_size = int(min(w, h) * ratio)
+
+    # Güvenlik önlemi: Kutu resimle aynı boyda olsa bile koordinat hatası vermemesi için
+    # en az 1 piksellik boşluk bırakıyoruz.
+    if box_size >= min(w, h):
+        box_size = min(w, h) - 1
+
+    # Kutu boyutu en az 1 piksel olsun
+    box_size = max(1, box_size)
+
+    # randint'in negatif aralık almasını engellemek için max(0, ...) kullanıyoruz
+    x_range = max(0, w - box_size)
+    y_range = max(0, h - box_size)
+
+    x1 = random.randint(0, x_range)
+    y1 = random.randint(0, y_range)
+    # --- DÜZELTME BİTİŞİ ---
+
     draw.rectangle([x1, y1, x1 + box_size, y1 + box_size], fill=0)  # black box
     return img
-
 
 # Function to apply random degradation
 def apply_random_degradation(img, strength=1):
