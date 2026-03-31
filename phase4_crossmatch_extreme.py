@@ -10,13 +10,6 @@ from sklearn.metrics import roc_curve
 # 🌟 KONTROL MERKEZİNDEN AYARLARI ÇEK
 from config import *
 
-# ==========================================
-# ⚙️ ÇAPRAZ TEST PARAMETRELERİ (ARTIK CONFIG'DEN GELİYOR)
-# ==========================================
-# QUALITY_MODEL, MATCHER_MODEL, THRESHOLD_NAME, CLASSIFIER_PATH,
-# QUALITY_CACHE, MATCHER_CACHE, BAYES_MODEL_PATH, OUTPUT_ROC_PLOT, OUTPUT_EDC_PLOT
-# değişkenleri otomatik olarak config.py dosyasından alındı!
-
 IJBC_BASE_DIR = "datasets/ijb-testsuite/ijb/IJBC"
 IJBC_PAIRS_FILE = os.path.join(IJBC_BASE_DIR, "pairs.txt")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -55,28 +48,21 @@ def get_frr_at_fpr(y_true, y_scores, target_fpr):
 
 
 def calculate_edc_fnmr(y_true, y_scores, quality_scores, discard_fractions, target_fpr=1e-5):
-    """Belirli bir FPR noktasında, kalitesiz resimler atıldıkça oluşan FNMR (FRR) değerlerini hesaplar."""
-    sorted_indices = np.argsort(quality_scores)  # Kalitesi en düşükten en yükseğe sırala
+    sorted_indices = np.argsort(quality_scores)
     fnmr_list = []
-
     for fraction in discard_fractions:
         discard_count = int(len(sorted_indices) * fraction)
-        keep_indices = sorted_indices[discard_count:]  # Sadece iyileri tut
-
+        keep_indices = sorted_indices[discard_count:]
         if len(keep_indices) == 0:
             fnmr_list.append(1.0)
             continue
-
         current_y_true = y_true[keep_indices]
         current_scores = y_scores[keep_indices]
-
         if sum(current_y_true) == 0:
             fnmr_list.append(1.0)
             continue
-
         fnmr = get_frr_at_fpr(current_y_true, current_scores, target_fpr)
         fnmr_list.append(fnmr)
-
     return fnmr_list
 
 
@@ -90,7 +76,6 @@ def main():
 
     pairs = parse_ijbc_pairs(IJBC_PAIRS_FILE)
 
-    # 1. HER İKİ CACHE'İ DE YÜKLE
     print("📦 Önbellekler (Cache) yükleniyor...")
     with open(QUALITY_CACHE, 'rb') as f:
         quality_embeddings = pickle.load(f)
@@ -103,7 +88,6 @@ def main():
     classifier.load_state_dict(torch.load(CLASSIFIER_PATH, map_location=DEVICE))
     classifier.eval()
 
-    # 2. HAKEM (buffalo_l) İLE KALİTELERİ ÖLÇ
     print("🧠 Hakem modeli resim kalitelerini puanlıyor...")
     quality_dict = {}
     for img_name, emb in quality_embeddings.items():
@@ -112,7 +96,6 @@ def main():
         with torch.no_grad():
             quality_dict[img_name] = torch.sigmoid(classifier(emb_tensor)).item()
 
-    # 3. İŞÇİ İLE EŞLEŞTİR
     print("👷 İşçi modeli eşleştirme yapıyor...")
     y_true, cos_sims, joint_qualities = [], [], []
     valid_img_pairs = []
@@ -135,7 +118,6 @@ def main():
     cos_sims = np.array(cos_sims, dtype=np.float32)
     joint_qualities = np.array(joint_qualities, dtype=np.float32)
 
-    # 4. BAYES ÇEVİRİSİ
     print("⚡ Skorlar Bayes olasılığına çevriliyor...")
     x_lut = np.linspace(-1.0, 1.0, 10000)
     f_gen = np.interp(cos_sims, x_lut, bayes_model['kde_genuine'](x_lut))
@@ -143,12 +125,37 @@ def main():
     scores_pm = (f_gen * bayes_model['p_genuine']) / (f_gen * bayes_model['p_genuine'] + f_imp * bayes_model['p_imposter'] + 1e-10)
 
     # ==========================================
-    # 🛡️ SÜREKLİ FÜZYON (Continuous Min-Quality Fusion)
+    # 🧠 YENİ MODÜL: ADAPTIVE ALPHA (SOFT PENALTY) OPTİMİZASYONU
     # ==========================================
-    print("🛡️ Threshold Olmadan 'Min-Quality' Çarpımı Uygulanıyor...")
+    import gc  # RAM temizleyici
+    print("\n🤖 Adaptive Alpha (α) Optimizasyonu Aranıyor...")
+    best_alpha = 0.0
+    best_frr = float('inf')
+    target_fpr_val = 1e-5
+
+    # 0^0 belirsizliğini önlemek için kaliteleri minimum 1e-5'e sabitle
+    safe_qualities = np.clip(joint_qualities, 1e-5, 1.0)
+
+    alphas_to_try = np.linspace(0.0, 3.0, 31)
+
+    for alpha in alphas_to_try:
+        temp_scores = scores_pm * (safe_qualities ** alpha)
+        frr = get_frr_at_fpr(y_true, temp_scores, target_fpr_val)
+        print(f"   Alpha = {alpha:.1f} -> FRR @ 1e-5: {frr:.4f}")
+
+        # En düşük FRR'yi vereni seç
+        if frr < best_frr:
+            best_frr = frr
+            best_alpha = alpha
+
+        # 🧹 HER DÖNGÜDEN SONRA RAM'İ ZORLA TEMİZLE
+        del temp_scores
+        gc.collect()
+
+    print(f"\n🏆 En İyi Alpha (α) Parametresi: {best_alpha:.1f} seçildi!")
 
     scores_baseline = cos_sims
-    scores_proposed = scores_pm * joint_qualities
+    scores_proposed = scores_pm * (safe_qualities ** best_alpha)
 
     # ==========================================
     # 📊 5. ÇIKTILAR VE GRAFİKLER
@@ -157,7 +164,7 @@ def main():
     print("\n" + "=" * 60)
     print(f"📊 CROSS-MATCHING FRR TABLOSU (Matcher: {MATCHER_MODEL})")
     print("=" * 60)
-    print(f"{'FPR':<10} | {'Baseline FRR':<15} | {'Proposed FRR (F1)':<15}")
+    print(f"{'FPR':<10} | {'Baseline FRR':<15} | {f'Adaptive FRR (a={best_alpha:.1f})':<15}")
     print("-" * 60)
     for fpr_val in target_fprs:
         base_frr = get_frr_at_fpr(y_true, scores_baseline, fpr_val)
@@ -170,7 +177,7 @@ def main():
     fpr_base, tpr_base, _ = roc_curve(y_true, scores_baseline)
     fpr_prop, tpr_prop, _ = roc_curve(y_true, scores_proposed)
     plt.plot(fpr_base, tpr_base, color='black', linestyle='--', lw=2, label=f'Baseline ({MATCHER_MODEL})')
-    plt.plot(fpr_prop, tpr_prop, color='red', lw=2, label=f'Proposed ($P_m \\times P_c$)')
+    plt.plot(fpr_prop, tpr_prop, color='red', lw=2, label=f'Adaptive Fusion ($\\alpha={best_alpha:.1f}$)')
     plt.xscale('log')
     plt.xlim([1e-6, 1e-2])
     plt.ylim([0.0, 1.05])
@@ -191,7 +198,7 @@ def main():
         edc_base = calculate_edc_fnmr(y_true, scores_baseline, joint_qualities, discard_fractions, target_fpr=fpr_val)
         plt.plot(discard_fractions * 100, edc_base, color=color, linestyle='--', marker='o', alpha=0.6, label=f'Baseline FNMR @ FPR={fpr_label}')
         edc_prop = calculate_edc_fnmr(y_true, scores_proposed, joint_qualities, discard_fractions, target_fpr=fpr_val)
-        plt.plot(discard_fractions * 100, edc_prop, color=color, linestyle='-', marker='s', linewidth=2.5, label=f'Proposed FNMR @ FPR={fpr_label}')
+        plt.plot(discard_fractions * 100, edc_prop, color=color, linestyle='-', marker='s', linewidth=2.5, label=f'Adaptive FNMR @ FPR={fpr_label}')
 
     plt.xlabel('Discarded Low-Quality Images (%)', fontsize=12, fontweight='bold')
     plt.ylabel('False Non-Match Rate (FNMR)', fontsize=12, fontweight='bold')
@@ -212,7 +219,7 @@ def main():
     impostor_idx = np.where(y_true == 0)[0]
     impostors = []
     for idx in impostor_idx:
-        impostors.append((valid_img_pairs[idx][0], valid_img_pairs[idx][1], cos_sims[idx], scores_pm[idx], joint_qualities[idx]))
+        impostors.append((valid_img_pairs[idx][0], valid_img_pairs[idx][1], cos_sims[idx], scores_proposed[idx], joint_qualities[idx]))
     impostors.sort(key=lambda x: x[3], reverse=True)
 
     sizan_sahteler = []
@@ -225,13 +232,13 @@ def main():
     if not sizan_sahteler:
         print("   Bulunamadı.")
     else:
-        for i, (img1, img2, cos_val, pm_val, qual_val) in enumerate(sizan_sahteler):
-            print(f"   {i + 1}. Resim 1: {img1:<25} | Resim 2: {img2:<25} | Kosinüs: {cos_val:.3f} | Pm: {pm_val:.4f} | Kalite: {qual_val:.3f}")
+        for i, (img1, img2, cos_val, prop_val, qual_val) in enumerate(sizan_sahteler):
+            print(f"   {i + 1}. Resim 1: {img1:<25} | Resim 2: {img2:<25} | Kosinüs: {cos_val:.3f} | Adaptive Skor: {prop_val:.4f} | Kalite: {qual_val:.3f}")
 
     genuine_idx = np.where(y_true == 1)[0]
     genuines = []
     for idx in genuine_idx:
-        genuines.append((valid_img_pairs[idx][0], valid_img_pairs[idx][1], cos_sims[idx], scores_pm[idx], joint_qualities[idx]))
+        genuines.append((valid_img_pairs[idx][0], valid_img_pairs[idx][1], cos_sims[idx], scores_proposed[idx], joint_qualities[idx]))
     genuines.sort(key=lambda x: x[4])
 
     katledilen_gercekler = []
@@ -244,8 +251,8 @@ def main():
     if not katledilen_gercekler:
         print("   Bulunamadı.")
     else:
-        for i, (img1, img2, cos_val, pm_val, qual_val) in enumerate(katledilen_gercekler):
-            print(f"   {i + 1}. Resim 1: {img1:<25} | Resim 2: {img2:<25} | Kosinüs: {cos_val:.3f} | Pm: {pm_val:.4f} | Kalite: {qual_val:.3f}")
+        for i, (img1, img2, cos_val, prop_val, qual_val) in enumerate(katledilen_gercekler):
+            print(f"   {i + 1}. Resim 1: {img1:<25} | Resim 2: {img2:<25} | Kosinüs: {cos_val:.3f} | Adaptive Skor: {prop_val:.4f} | Kalite: {qual_val:.3f}")
     print("=" * 60 + "\n")
 
     # ==========================================
@@ -256,16 +263,18 @@ def main():
     np.random.seed(42)
     sample_impostors = np.random.choice(impostor_idx, min(50000, len(impostor_idx)), replace=False)
 
-    plt.scatter(joint_qualities[sample_impostors], scores_pm[sample_impostors], color='red', alpha=0.1, s=10, label='Impostors (Sahteler)')
-    plt.scatter(joint_qualities[genuine_idx], scores_pm[genuine_idx], color='green', alpha=0.3, s=15, label='Genuines (Gerçekler)')
+    plt.scatter(joint_qualities[sample_impostors], scores_proposed[sample_impostors], color='red', alpha=0.1, s=10, label='Impostors (Sahteler)')
+    plt.scatter(joint_qualities[genuine_idx], scores_proposed[genuine_idx], color='green', alpha=0.3, s=15, label='Genuines (Gerçekler)')
     plt.axvline(x=0.40, color='blue', linestyle='--', linewidth=2, label='Kalite Filtresi Sınırı (Örnek)')
-    plt.axhline(y=0.80, color='purple', linestyle='--', linewidth=2, label='Kabul Barajı (Örnek)')
+
+    # Yeni eşiği grafiğe daha uygun yerleştiriyoruz
+    plt.axhline(y=0.10, color='purple', linestyle='--', linewidth=2, label='Adaptive Kabul Barajı (Örnek)')
     plt.text(0.70, 0.90, "Sızan HD Sahteler\n(Kapasite Sorunu)", color='darkred', fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.7))
-    plt.text(0.10, 0.30, "Çöpe Atılan Gerçekler\n(İkincil Hasar)", color='darkgreen', fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.7))
+    plt.text(0.10, 0.05, "Çöpe Atılan Gerçekler\n(İkincil Hasar)", color='darkgreen', fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.7))
 
     plt.xlabel('Joint Quality Score $min(P_{c1}, P_{c2})$', fontsize=12, fontweight='bold')
-    plt.ylabel('Matcher Bayes Probability ($P_m$)', fontsize=12, fontweight='bold')
-    plt.title(f'Failure Analysis: Quality vs Probability\nMatcher: {MATCHER_MODEL} | Quality: {QUALITY_MODEL}', fontsize=14, fontweight='bold')
+    plt.ylabel(f'Adaptive Fusion Score ($\\alpha={best_alpha:.1f}$)', fontsize=12, fontweight='bold')
+    plt.title(f'Failure Analysis: Quality vs Adaptive Score\nMatcher: {MATCHER_MODEL} | Quality: {QUALITY_MODEL}', fontsize=14, fontweight='bold')
 
     leg = plt.legend(loc='upper left', markerscale=3)
     for lh in leg.legend_handles: lh.set_alpha(1)
