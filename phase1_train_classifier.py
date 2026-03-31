@@ -10,8 +10,8 @@ import pickle
 # ==========================================
 # ⚙️ PARAMETRELER
 # ==========================================
-INPUT_DATA_FILE = "lfw_train_data_buffalo_l_thresh0.25.pkl"  # <-- Burayı güncelledik
-MODEL_SAVE_PATH = "classifier_buffalo_l_thresh0.25.pth"      # <-- Burayı güncelledik
+INPUT_DATA_FILE = "lfw_train_data_antelopev2_thresh0.25.pkl"
+MODEL_SAVE_PATH  = "classifier_antelopev2_thresh0.25.pth"
 
 # Eğitim Hiperparametreleri
 BATCH_SIZE = 128

@@ -14,6 +14,21 @@ from arcfaceutility import ensure_rgb, get_encoding_from_image
 # ⚙️ PARAMETRELER
 # ==========================================
 MODEL_NAME = 'antelopev2'
+#MODEL_NAME = 'buffalo_s'
+#MODEL_NAME = 'r100_ms1mv3'
+#MODEL_NAME = 'r34_glint360k'
+#MODEL_NAME = 'r50_vgg2'
+#MODEL_NAME = 'r100_ms1mv2'
+#MODEL_NAME = 'r50_cisia'
+#MODEL_NAME = 'r50_glintasia'
+#MODEL_NAME = 'ms1m_megaface_r50'
+#MODEL_NAME = 'ms1mv2_r50'
+#MODEL_NAME = 'ms1mv3_r50'
+#MODEL_NAME = 'r34_ms1mv3'
+#MODEL_NAME = 'r18_ms1mv3'
+#MODEL_NAME = 'buffalo_l'
+#MODEL_NAME = 'r100_glint360k'
+
 TINYFACE_IMAGES_DIR = "datasets/tinyface/images"
 TINYFACE_PAIRS_FILE = "datasets/tinyface/pairs.txt"
 
@@ -113,13 +128,13 @@ def main():
     y_imp = kde_imposter(x_vals)
 
     plt.figure(figsize=(10, 6))
-    plt.plot(x_vals, y_gen, color='green', label='Genuine (Aynı Kişi)', linewidth=2)
+    plt.plot(x_vals, y_gen, color='green', label='Genuine', linewidth=2)
     plt.fill_between(x_vals, y_gen, alpha=0.3, color='green')
 
-    plt.plot(x_vals, y_imp, color='red', label='Imposter (Farklı Kişi)', linewidth=2)
+    plt.plot(x_vals, y_imp, color='red', label='Imposter', linewidth=2)
     plt.fill_between(x_vals, y_imp, alpha=0.3, color='red')
 
-    plt.title("TinyFace Cosine Similarity Distributions", fontsize=14)
+    plt.title("TinyFace Cosine Similarity Distributions - " + MODEL_NAME, fontsize=14)
     plt.xlabel("Cosine Similarity Score", fontsize=12)
     plt.ylabel("Density", fontsize=12)
     plt.legend()

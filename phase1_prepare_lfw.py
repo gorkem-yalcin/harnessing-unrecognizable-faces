@@ -13,8 +13,8 @@ from arcfaceutility import ensure_rgb, get_encoding_from_image
 # ==========================================
 # ⚙️ PARAMETRELER (PYCHARM'DAN DÜZENLE)
 # ==========================================
-MODEL_NAME = 'buffalo_l'  # Hangi modeli kullanıyoruz?
-DECISION_THRESHOLD = 0.25  # BUNDAN BÜYÜKSE = 1 (Recognizable)
+MODEL_NAME = 'antelopev2'  # <-- BURAYI DEĞİŞTİRDİK (Eski hali: 'buffalo_l')
+DECISION_THRESHOLD = 0.25  # BUNDAN BÜYÜKSE = 1 (Recognizable) - AYNI KALIYOR
 
 # Dosya Yolları
 BASE_CACHE_FILE = f"lfw_base_embeddings_{MODEL_NAME}.pkl"  # AĞIR İŞÇİLİK BURAYA KAYDEDİLECEK
