@@ -10,31 +10,18 @@ import matplotlib.pyplot as plt
 # Mevcut scriptlerinden import
 from arcfaceutility import ensure_rgb, get_encoding_from_image
 
+# 🌟 KONTROL MERKEZİNDEN AYARLARI ÇEK
+from config import *
+
 # ==========================================
-# ⚙️ PARAMETRELER
+# ⚙️ PARAMETRELER (ARTIK CONFIG'DEN GELİYOR)
 # ==========================================
-MODEL_NAME = 'antelopev2'
-#MODEL_NAME = 'buffalo_s'
-#MODEL_NAME = 'r100_ms1mv3'
-#MODEL_NAME = 'r34_glint360k'
-#MODEL_NAME = 'r50_vgg2'
-#MODEL_NAME = 'r100_ms1mv2'
-#MODEL_NAME = 'r50_cisia'
-#MODEL_NAME = 'r50_glintasia'
-#MODEL_NAME = 'ms1m_megaface_r50'
-#MODEL_NAME = 'ms1mv2_r50'
-#MODEL_NAME = 'ms1mv3_r50'
-#MODEL_NAME = 'r34_ms1mv3'
-#MODEL_NAME = 'r18_ms1mv3'
-#MODEL_NAME = 'buffalo_l'
-#MODEL_NAME = 'r100_glint360k'
+MODEL_NAME = MATCHER_MODEL
+BAYES_MODEL_FILE = BAYES_MODEL_PATH
+PLOT_OUTPUT_FILE = f"tinyface_distributions_{MODEL_NAME}.png"
 
 TINYFACE_IMAGES_DIR = "datasets/tinyface/images"
 TINYFACE_PAIRS_FILE = "datasets/tinyface/pairs.txt"
-
-# Çıktılar
-BAYES_MODEL_FILE = f"tinyface_bayes_model_{MODEL_NAME}.pkl"
-PLOT_OUTPUT_FILE = f"tinyface_distributions_{MODEL_NAME}.png"
 
 CACHE = {}
 
@@ -72,7 +59,9 @@ def process_clean_image(img_path):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     cache_key = f"{MODEL_NAME}_{img_path}"
-    emb, _ = get_encoding_from_image(img, cache=CACHE, cache_key=cache_key)
+
+    # 🌟 BURASI GÜNCELLENDİ: model_name parametresi eklendi
+    emb, _ = get_encoding_from_image(img, model_name=MODEL_NAME, cache=CACHE, cache_key=cache_key)
     return emb
 
 

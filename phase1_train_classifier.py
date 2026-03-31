@@ -7,11 +7,15 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import pickle
 
+# 🌟 KONTROL MERKEZİNDEN AYARLARI ÇEK
+from config import *
+
 # ==========================================
-# ⚙️ PARAMETRELER
+# ⚙️ PARAMETRELER (ARTIK CONFIG'DEN GELİYOR)
 # ==========================================
-INPUT_DATA_FILE = "lfw_train_data_antelopev2_thresh0.25.pkl"
-MODEL_SAVE_PATH  = "classifier_antelopev2_thresh0.25.pth"
+# Dosya yolları config.py'dan otomatik olarak çekiliyor!
+INPUT_DATA_FILE = LFW_TRAIN_DATA
+MODEL_SAVE_PATH = CLASSIFIER_PATH
 
 # Eğitim Hiperparametreleri
 BATCH_SIZE = 128
@@ -23,6 +27,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. VERİ HAZIRLIĞI
 # ==========================================
 print(f"🚀 Eğitim Başlıyor... Cihaz: {DEVICE}")
+print(f"🧠 Eğitilen Kalite (Hakem) Modeli: {QUALITY_MODEL}")
 print(f"📦 Veri yükleniyor: {INPUT_DATA_FILE}")
 
 with open(INPUT_DATA_FILE, 'rb') as f:
