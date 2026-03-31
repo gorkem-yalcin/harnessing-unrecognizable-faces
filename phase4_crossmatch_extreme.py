@@ -125,38 +125,44 @@ def main():
     scores_pm = (f_gen * bayes_model['p_genuine']) / (f_gen * bayes_model['p_genuine'] + f_imp * bayes_model['p_imposter'] + 1e-10)
 
     # ==========================================
-    # 🧠 YENİ MODÜL: ADAPTIVE ALPHA (SOFT PENALTY) OPTİMİZASYONU
+    # 🧠 YENİ MODÜL: SCIPY BRENT METODU İLE OTONOM OPTİMİZASYON
     # ==========================================
-    import gc  # RAM temizleyici
-    print("\n🤖 Adaptive Alpha (α) Optimizasyonu Aranıyor...")
-    best_alpha = 0.0
-    best_frr = float('inf')
+    from scipy.optimize import minimize_scalar
+
+    print("\n🤖 Akıllı Optimizasyon (SciPy Brent Metodu) Başlıyor...")
     target_fpr_val = 1e-5
 
     # 0^0 belirsizliğini önlemek için kaliteleri minimum 1e-5'e sabitle
     safe_qualities = np.clip(joint_qualities, 1e-5, 1.0)
 
-    alphas_to_try = np.linspace(0.0, 3.0, 31)
+    # SciPy'ın sürekli çağıracağı "Hedef Fonksiyon" (Amacımız bu fonksiyonun çıktısını minimize etmek)
+    def objective_function(alpha):
+        # SciPy bazen çok uç değerler deneyebilir, sınırları koruyalım
+        if alpha < 0.0 or alpha > 5.0:
+            return 1.0
 
-    for alpha in alphas_to_try:
-        temp_scores = scores_pm * (safe_qualities ** alpha)
+            # Verilen alpha için geçici skorları hesapla
+        temp_scores = scores_pm * (safe_qualities ** float(alpha))
+
+        # Bu skorların FRR değerini bul
         frr = get_frr_at_fpr(y_true, temp_scores, target_fpr_val)
-        print(f"   Alpha = {alpha:.1f} -> FRR @ 1e-5: {frr:.4f}")
 
-        # En düşük FRR'yi vereni seç
-        if frr < best_frr:
-            best_frr = frr
-            best_alpha = alpha
+        # Fonksiyon sonlanınca temp_scores bellekten otomatik silinir (RAM dostu)
+        return frr
 
-        # 🧹 HER DÖNGÜDEN SONRA RAM'İ ZORLA TEMİZLE
-        del temp_scores
-        gc.collect()
+    # Algoritmayı serbest bırakıyoruz! 0.0 ile 3.0 arasında o mükemmel dibi kendi bulacak.
+    # disp=3 parametresi, algoritmanın adım adım ne yaptığını terminale yazdırır.
+    result = minimize_scalar(objective_function, bounds=(0.0, 3.0), method='bounded', options={'xatol': 1e-3, 'disp': 3})
 
-    print(f"\n🏆 En İyi Alpha (α) Parametresi: {best_alpha:.1f} seçildi!")
+    best_alpha = result.x
+    best_frr = result.fun
+
+    print(f"\n🏆 Optimizasyon Tamamlandı!")
+    print(f"   Bulunan En Kusursuz Alpha (α): {best_alpha:.4f}")
+    print(f"   Ulaşılan Minimum FRR: {best_frr:.4f}")
 
     scores_baseline = cos_sims
     scores_proposed = scores_pm * (safe_qualities ** best_alpha)
-
     # ==========================================
     # 📊 5. ÇIKTILAR VE GRAFİKLER
     # ==========================================
